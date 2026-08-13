@@ -1,6 +1,11 @@
 ---
 name: ironcore
-description: Operate the IronCore IaaS platform – create and manage VMs (Machines), Volumes, Networks, IPs, LoadBalancers, NATGateways and Buckets via kubectl. Use for requests like "create a VM", "set up a Debian machine", "create a volume", "configure network/firewall/IP", OS images or Ignition. IMPORTANT: NEVER apply infrastructure changes directly – always present a detailed proposal with all open decisions first and wait for user approval.
+description: >-
+  Operate the IronCore IaaS platform - create and manage VMs (Machines), Volumes, Networks, IPs,
+  LoadBalancers, NATGateways and Buckets via kubectl. Use for requests like "create a VM",
+  "set up a Debian machine", "create a volume", "configure network/firewall/IP", OS images or Ignition.
+  IMPORTANT - NEVER apply infrastructure changes directly - always present a detailed proposal with
+  all open decisions first and wait for user approval.
 ---
 
 # IronCore IaaS
