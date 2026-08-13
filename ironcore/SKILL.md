@@ -78,6 +78,8 @@ kubectl describe machine <name>   # conditions + events (e.g. IgnitionNotReady)
 YAML skeletons and details: [references/workflows.md](references/workflows.md)
 Object model, fields, status phases: [references/api-overview.md](references/api-overview.md)
 Images & Ignition (pitfalls!): [references/images-ignition.md](references/images-ignition.md)
+Full worked example ("create a Debian VM"): [references/example-proposal.md](references/example-proposal.md)
+When things hang: [references/troubleshooting.md](references/troubleshooting.md)
 
 ## Hard-learned rules (always apply)
 
