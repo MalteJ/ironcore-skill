@@ -25,6 +25,7 @@ kind: Machine
 metadata: {name: <vm>}
 spec:
   machineClassRef: {name: <machineclass>}    # from: kubectl get machineclasses
+  power: "On"                                # quoted! YAML 1.1: On -> bool true -> apply fails
   ignitionRef: {name: <ignition-secret>, key: ignition.yaml}
   networkInterfaces:
   - name: primary
@@ -34,6 +35,31 @@ spec:
     device: vda
     volumeRef: {name: <vm>-root-volume}
 ```
+
+### AZ pinning (important for Machine + Volume)
+
+A Machine can only attach Volumes from the **same AZ**. There is no `zone` field
+in Machine/Volume specs – the AZ is a topology label on the pools:
+`topology.ironcore.dev/zone` (and `.../region`), set by the poollets on
+MachinePool/VolumePool/BucketPool. Without pinning, the scheduler may place
+Machine and Volume in different AZs and the volume attach hangs forever
+(Machine stays Pending with `VolumeNotReady: ... is not attached`).
+
+Pin **both** sides to the same zone:
+
+```yaml
+# Machine
+spec:
+  machinePoolSelector: {topology.ironcore.dev/zone: <az>}
+# Volume
+spec:
+  volumePoolSelector: {topology.ironcore.dev/zone: <az>}   # or explicit volumePoolRef/machinePoolRef
+```
+
+Discover AZs: `kubectl get machinepools --show-labels` / `kubectl get volumepools --show-labels`.
+VolumePool names may coincide with zone names – that is naming convention, not API semantics.
+Note: once the scheduler has set `spec.machinePoolRef`, re-applying a selector alone will NOT
+reschedule the Machine – delete and recreate it (referenced non-ephemeral NICs/Volumes survive).
 
 ## Workflow 2: VM with ephemeral root disk (localDisk)
 
@@ -46,6 +72,26 @@ spec:
     localDisk:
       image: <registry-ref>                  # pulled directly by the pool provider
 ```
+
+## Workflow 2a: Memory-boot via `spec.image` (fastest, no volume provisioning)
+
+The usage guide (ironcore.dev/iaas/usage-guides/compute/) shows `spec.image` directly on the
+Machine: the provider boots the image without creating/importing a Volume first. Good for
+throwaway/test VMs and a useful fallback when Volume `dataSource.osImage` provisioning hangs
+(image pull into the storage pool is skipped entirely).
+
+```yaml
+spec:
+  machineClassRef: {name: <machineclass>}
+  image: <registry-ref>            # booted directly, Ignition-capable variant required
+  ignitionRef: {name: <ignition-secret>}
+  power: "On"                     # MUST be quoted (YAML 1.1: On -> bool)
+  networkInterfaces:
+  - name: primary
+    networkInterfaceRef: {name: <nic>}
+```
+
+Data on the boot image is local to the provider host – nothing survives outside the network config.
 
 ## Workflow 3: Fully ephemeral (VM + NIC + VIP in one manifest)
 
@@ -99,7 +145,10 @@ spec:
     virtualIPRef: {name: <vip>}               # or an ephemeral template
 ```
 
-Wait: `kubectl wait --for=jsonpath='{.status.state}'=Available network/<network> --timeout=60s`
+Wait: `kubectl wait --for=jsonpath='{.status.state}'=Available network/<network> --timeout=30s`
+
+Timing hint: small objects (Network, NIC→machineless Pending is normal, VIP, NATGW) usually
+realize in <10–30s. Prefer short timeouts (10–30s) with a retry loop over long blocking waits.
 
 ## Workflow 5: IPAM (prefix hierarchy for dynamic IPs)
 
@@ -146,6 +195,9 @@ spec:
 ```
 
 ## Workflow 7: Firewall (NetworkPolicy)
+
+> Lookup hint: always use `kubectl get networkpolicies.networking.ironcore.dev` – the short
+> name collides with k8s `networking.k8s.io` NetworkPolicies.
 
 ```yaml
 apiVersion: networking.ironcore.dev/v1alpha1

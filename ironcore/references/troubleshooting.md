@@ -4,6 +4,22 @@ Things get stuck in Pending all the time. This is the diagnosis map –
 work symptom → cause → check. Primary tools: `-o wide`, `kubectl describe` (conditions + events),
 and the status fields listed in api-overview.md.
 
+## Limited observability as a tenant (no events, no logs)
+
+Typical tenant ServiceAccounts cannot `kubectl get events`, read provider/poollet logs, or see
+`status.conditions` – objects show only bare `status.state`. Diagnose with what's visible:
+
+| Signal | Meaning |
+|---|---|
+| `spec.machinePoolRef` / `spec.volumePoolRef` set | scheduler placed the object successfully |
+| Volume `status.volumeID` present (e.g. `ceph-provider://…`) | poollet picked it up; creation started |
+| Volume Pending + `status.resources.storage: "0"` | hangs provider-side during provisioning / image pull |
+| Network/VIP/NATGW Available while NIC `Pending` | network side fine; check Machine/NIC binding |
+| Second, unrelated object Pending at the same time | smells like a platform-wide outage, not your YAML |
+
+When it hangs provider-side, hand to the platform team: pool name(s), volumeID, resource names
+and creation timestamps. A full dump for the ticket: `kubectl get network,networkinterface,virtualip,natgateway,networkpolicies.networking.ironcore.dev,volume,machine -o yaml`.
+
 ## Machine stuck in Pending
 
 Check in this order:
@@ -19,7 +35,8 @@ kubectl get machinepools -o wide    # is any pool Ready and matches selector/tai
 | no `machinePoolRef` set | scheduler found no pool | check `machinePoolSelector` labels vs pool labels; check pool `status.state: Ready`; do the Machine's `tolerations` cover pool `taints`? |
 | `IgnitionNotReady` | secret missing/wrong ns/wrong key/not rendered | secret must be in the Machine's namespace, key `ignition.yaml`, populated with rendered Ignition JSON (see images-ignition.md) |
 | `networkInterfaces[].state: Pending` | referenced NIC missing or not Available | check that NIC's status (below) |
-| `volumes[].state: Pending` | referenced Volume missing/not Available, or image pull failing | check Volume status; for `localDisk.image`/`osImage`: registry reachable **from the pool provider**? image actually Ignition-capable? |
+| `volumes[].state: Pending` | referenced Volume missing/not Available, or image pull failing | check Volume status; for `localDisk.image`/`osImage`: registry reachable **from the pool provider**? image actually Ignition-capable? Fallback: boot via `spec.image` on the Machine (no volume provisioning, see workflows.md 2a) |
+| `VolumeNotReady: ... is not attached` although Volume is `Available` | AZ mismatch: scheduler placed Machine and Volume in different AZs – cross-AZ attach is impossible | resolve zones: `machine .spec.machinePoolRef` → `kubectl get machinepool <pool> -o jsonpath='{.metadata.labels.topology\.ironcore\.dev/zone}'`, same for the VolumePool (`spec/status.volumePoolRef`). Pin both via pool selectors (see workflows.md "AZ pinning"), then delete + recreate the Machine (the Volume survives) |
 | class exists but machine never Running | provider error | pool's poollet/provider logs; `kubectl describe machinepool <pool>` |
 
 ## Machine Running but nothing works
@@ -40,6 +57,11 @@ kubectl get machinepools -o wide    # is any pool Ready and matches selector/tai
 - Resize rejected: only growth and only when the class has `resizePolicy: ExpandOnly`.
 
 ## NetworkInterface stuck in Pending
+
+**First check the normal case: a NIC without a Machine stays Pending.** The attach controller
+sets `spec.machineRef` only when a Machine references the NIC; the actual interface is
+materialized on the provider host together with the VM. A NIC Pending pre-Machine (with its
+VirtualIP already showing `status.ip`) is expected behavior.
 
 - `networkRef` Network not `Available` yet – wait/recreate.
 - Ephemeral IP never allocated: the referenced `Prefix` (via `parentRef`/`parentSelector` in the
